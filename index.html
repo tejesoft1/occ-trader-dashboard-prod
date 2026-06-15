@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OCC Trader — Reconciliación y curva de capital</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --surface: #171a21;
+    --surface-2: #1e222b;
+    --border: #2a2e38;
+    --text: #e8e9ed;
+    --text-secondary: #9a9fad;
+    --text-tertiary: #6b7080;
+    --accent: #4f8ef7;
+    --success: #3fbf7f;
+    --warning: #f0a23f;
+    --danger: #e2615a;
+    --radius: 10px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 2rem 1rem 4rem;
+  }
+
+  .wrap { max-width: 900px; margin: 0 auto; }
+
+  h1 { font-size: 22px; font-weight: 500; margin: 0 0 0.25rem; }
+
+  .subtitle { font-size: 14px; color: var(--text-secondary); margin: 0 0 1.5rem; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .control-row {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 1rem; flex-wrap: wrap;
+  }
+  .control-row:last-child { margin-bottom: 0; }
+
+  .control-row label { font-size: 14px; color: var(--text-secondary); min-width: 110px; }
+
+  input[type="text"], input[type="password"], input[type="number"], input[type="date"] {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); padding: 8px 10px;
+    font-size: 14px; font-variant-numeric: tabular-nums; flex: 1; min-width: 140px;
+  }
+
+  button {
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 6px; padding: 9px 16px; font-size: 14px;
+    font-weight: 500; cursor: pointer;
+  }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+  }
+
+  .metric { background: var(--surface-2); border-radius: var(--radius); padding: 1rem; }
+  .metric-label { font-size: 13px; color: var(--text-secondary); margin: 0 0 6px; }
+  .metric-value { font-size: 22px; font-weight: 500; margin: 0; font-variant-numeric: tabular-nums; }
+  .metric-hint { font-size: 12px; color: var(--text-tertiary); margin: 6px 0 0; }
+  .success { color: var(--success); }
+  .danger { color: var(--danger); }
+  .warning { color: var(--warning); }
+
+  .chart-container { position: relative; height: 320px; margin-top: 0.5rem; }
+
+  table { width: 100%; font-size: 13px; border-collapse: collapse; }
+  th { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .table-wrap { overflow-x: auto; margin-top: 1rem; }
+
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 12px; font-weight: 500;
+  }
+  .badge-ok { background: rgba(63,191,127,0.15); color: var(--success); }
+  .badge-warn { background: rgba(224,165,63,0.15); color: var(--warning); }
+  .badge-err { background: rgba(226,97,90,0.15); color: var(--danger); }
+
+  .footnote { font-size: 12px; color: var(--text-tertiary); margin: 0; }
+  .footnote + .footnote { margin-top: 0.5rem; }
+
+  .status-msg { font-size: 13px; color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>OCC Trader — Reconciliación y curva de capital</h1>
+  <p class="subtitle">
+    Compara las operaciones registradas en Postgres (occ-trader-multi) contra
+    los fills reales de Binance Futures, y muestra la evolución del capital.
+  </p>
+
+  <div class="card">
+    <div class="control-row">
+      <label for="apiBase">URL del API</label>
+      <input type="text" id="apiBase" placeholder="https://tu-dominio.com/dashboard-api">
+    </div>
+    <div class="control-row">
+      <label for="apiToken">Token</label>
+      <input type="password" id="apiToken" placeholder="(si está configurado)">
+    </div>
+    <div class="control-row">
+      <label for="startDate">Desde</label>
+      <input type="date" id="startDate">
+      <label for="endDate" style="min-width:60px;">Hasta</label>
+      <input type="date" id="endDate">
+      <button id="loadBtn">Cargar</button>
+    </div>
+    <p class="status-msg" id="statusMsg"></p>
+  </div>
+
+  <div class="card" id="balanceCard" style="display:none;">
+    <h2 style="font-size:16px; font-weight:500; margin:0 0 1rem;">Estado actual (Binance)</h2>
+    <div class="grid">
+      <div class="metric">
+        <p class="metric-label">Balance (wallet)</p>
+        <p class="metric-value" id="balWallet-out">—</p>
+      </div>
+      <div class="metric">
+        <p class="metric-label">PnL no realizado</p>
+        <p class="metric-value" id="balUnreal-out">—</p>
+      </div>
+      <div class="metric">
+        <p class="metric-label">Equity total</p>
+        <p class="metric-value success" id="balEquity-out">—</p>
+      </div>
+      <div class="metric">
+        <p class="metric-label">Posición abierta</p>
+        <p class="metric-value" id="balPosition-out">—</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="font-size:16px; font-weight:500; margin:0 0 1rem;">Evolución del capital</h2>
+    <div class="chart-container">
+      <canvas id="capitalChart" role="img" aria-label="Gráfico de líneas con la evolución del capital total (equity) en el tiempo"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="font-size:16px; font-weight:500; margin:0 0 1rem;">Resumen de reconciliación</h2>
+    <div class="grid" id="reconSummary"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="font-size:16px; font-weight:500; margin:0 0 1rem;">Operaciones (Postgres vs. Binance)</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th><th>Fecha</th><th>Side</th><th>Señal</th>
+            <th>Precio (DB)</th><th>Precio (Binance)</th>
+            <th>Qty (DB)</th><th>Qty (Binance)</th>
+            <th>PnL (DB)</th><th>PnL real. (Binance)</th>
+            <th>Match</th>
+          </tr>
+        </thead>
+        <tbody id="tradesBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" id="orphanCard" style="display:none;">
+    <h2 style="font-size:16px; font-weight:500; margin:0 0 1rem;">
+      Órdenes en Binance sin registro en Postgres
+    </h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Order ID</th><th>Fecha</th><th>Side</th><th>Precio</th><th>Qty</th><th>PnL realizado</th></tr>
+        </thead>
+        <tbody id="orphanBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <p class="footnote">
+    Este HTML es estático (GitHub Pages) y consume un endpoint de solo
+    lectura corriendo en tu servidor (<code>occ-dashboard</code>), separado
+    del proceso que gestiona operaciones reales (<code>occ-trader-multi</code>).
+    Las credenciales de Binance y Postgres usadas por ese endpoint son de
+    SOLO LECTURA y no pueden ejecutar órdenes ni modificar datos.
+  </p>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+  const apiBaseEl = document.getElementById('apiBase');
+  const apiTokenEl = document.getElementById('apiToken');
+  const startDateEl = document.getElementById('startDate');
+  const endDateEl = document.getElementById('endDate');
+  const loadBtn = document.getElementById('loadBtn');
+  const statusMsg = document.getElementById('statusMsg');
+
+  // Defaults: últimos 30 días
+  const today = new Date();
+  const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+  endDateEl.value = today.toISOString().slice(0, 10);
+  startDateEl.value = monthAgo.toISOString().slice(0, 10);
+
+  // Recordar config en localStorage del navegador (no sensible más allá de
+  // lo que el propio usuario tipea, queda solo en su equipo)
+  apiBaseEl.value = localStorage.getItem('occ_dash_api_base') || '';
+  apiTokenEl.value = localStorage.getItem('occ_dash_api_token') || '';
+
+  const fmtUSD = (v) => (v === null || v === undefined) ? '—' :
+    '$' + Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const fmtNum = (v, d = 4) => (v === null || v === undefined) ? '—' : Number(v).toFixed(d);
+  const fmtDate = (iso) => iso ? new Date(iso).toLocaleString('es-CL', { timeZone: 'UTC' }) + ' UTC' : '—';
+
+  let capitalChart;
+
+  async function apiFetch(path, params) {
+    const base = apiBaseEl.value.replace(/\/$/, '');
+    const url = new URL(base + path);
+    Object.entries(params || {}).forEach(([k, v]) => url.searchParams.set(k, v));
+    const token = apiTokenEl.value;
+    if (token) url.searchParams.set('token', token);
+    const resp = await fetch(url.toString());
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    return resp.json();
+  }
+
+  function renderBalance(live) {
+    const card = document.getElementById('balanceCard');
+    if (!live) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    document.getElementById('balWallet-out').textContent = fmtUSD(live.balance);
+    const unreal = live.unrealized_pnl;
+    const unrealEl = document.getElementById('balUnreal-out');
+    unrealEl.textContent = fmtUSD(unreal);
+    unrealEl.className = 'metric-value ' + (unreal >= 0 ? 'success' : 'danger');
+    document.getElementById('balEquity-out').textContent = fmtUSD(live.total_equity);
+    const pos = live.position;
+    document.getElementById('balPosition-out').textContent = pos
+      ? `${pos.side.toUpperCase()} ${fmtNum(pos.quantity, 2)} @ ${fmtNum(pos.entry_price, 4)}`
+      : 'Sin posición';
+  }
+
+  function renderCapitalChart(points) {
+    const labels = points.map(p => p.timestamp);
+    const equity = points.map(p => p.total_equity);
+    const peak = points.map(p => p.peak_equity);
+
+    if (capitalChart) {
+      capitalChart.data.labels = labels;
+      capitalChart.data.datasets[0].data = equity;
+      capitalChart.data.datasets[1].data = peak;
+      capitalChart.update();
+      return;
+    }
+
+    capitalChart = new Chart(document.getElementById('capitalChart'), {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'Equity total',
+            data: equity,
+            borderColor: '#4f8ef7',
+            backgroundColor: 'rgba(79,142,247,0.08)',
+            fill: true,
+            tension: 0.15,
+            pointRadius: 0,
+            borderWidth: 2,
+          },
+          {
+            label: 'Peak equity',
+            data: peak,
+            borderColor: '#6b7080',
+            backgroundColor: 'transparent',
+            borderDash: [4, 3],
+            tension: 0,
+            pointRadius: 0,
+            borderWidth: 1,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { labels: { color: '#9a9fad' } },
+          tooltip: {
+            callbacks: { label: (ctx) => ctx.dataset.label + ': ' + fmtUSD(ctx.parsed.y) },
+          },
+        },
+        scales: {
+          x: {
+            ticks: { color: '#9a9fad', autoSkip: true, maxRotation: 0, maxTicksLimit: 10 },
+            grid: { display: false },
+          },
+          y: {
+            ticks: { color: '#9a9fad', callback: (v) => '$' + Number(v).toLocaleString('en-US') },
+            grid: { color: '#2a2e38' },
+          },
+        },
+      },
+    });
+  }
+
+  function renderReconSummary(summary, binanceError) {
+    const el = document.getElementById('reconSummary');
+    const items = [
+      ['Trades en Postgres', summary.db_trades_count, ''],
+      ['Órdenes en Binance', summary.binance_orders_count, ''],
+      ['Coincidencias', summary.matched_count, 'success'],
+      ['Sin match en Binance', summary.unmatched_db_count, summary.unmatched_db_count > 0 ? 'warning' : ''],
+      ['Huérfanas en Binance', summary.orphan_binance_count, summary.orphan_binance_count > 0 ? 'warning' : ''],
+    ];
+    el.innerHTML = items.map(([label, val, cls]) => `
+      <div class="metric">
+        <p class="metric-label">${label}</p>
+        <p class="metric-value ${cls}">${val}</p>
+      </div>
+    `).join('');
+    if (binanceError) {
+      el.innerHTML += `
+        <div class="metric" style="grid-column: 1 / -1;">
+          <p class="metric-label">Binance</p>
+          <p class="metric-value danger" style="font-size:14px;">${binanceError}</p>
+        </div>`;
+    }
+  }
+
+  function renderTrades(trades) {
+    const body = document.getElementById('tradesBody');
+    body.innerHTML = trades.map(t => {
+      const b = t.binance_match;
+      const matchBadge = b
+        ? '<span class="badge badge-ok">OK</span>'
+        : '<span class="badge badge-err">sin match</span>';
+      return `<tr>
+        <td>${t.db_trade_id}</td>
+        <td>${fmtDate(t.timestamp)}</td>
+        <td>${t.side} / ${t.status}</td>
+        <td>${t.signal}${t.close_signal ? ' → ' + t.close_signal : ''}</td>
+        <td>${fmtNum(t.db_price)}</td>
+        <td>${b ? fmtNum(b.price) : '—'}</td>
+        <td>${fmtNum(t.db_quantity, 2)}</td>
+        <td>${b ? fmtNum(b.quantity, 2) : '—'}</td>
+        <td>${t.db_pnl_usdt !== null ? fmtUSD(t.db_pnl_usdt) : '—'}</td>
+        <td>${b ? fmtUSD(b.realized_pnl) : '—'}</td>
+        <td>${matchBadge}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function renderOrphans(orphans) {
+    const card = document.getElementById('orphanCard');
+    if (!orphans.length) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    const body = document.getElementById('orphanBody');
+    body.innerHTML = orphans.map(o => `<tr>
+      <td>${o.order_id}</td>
+      <td>${fmtDate(o.time)}</td>
+      <td>${o.side}</td>
+      <td>${fmtNum(o.price)}</td>
+      <td>${fmtNum(o.quantity, 2)}</td>
+      <td>${fmtUSD(o.realized_pnl)}</td>
+    </tr>`).join('');
+  }
+
+  async function load() {
+    if (!apiBaseEl.value) {
+      statusMsg.textContent = 'Ingresá la URL del API.';
+      return;
+    }
+    localStorage.setItem('occ_dash_api_base', apiBaseEl.value);
+    localStorage.setItem('occ_dash_api_token', apiTokenEl.value);
+
+    loadBtn.disabled = true;
+    statusMsg.textContent = 'Cargando...';
+
+    const start = startDateEl.value;
+    const end = endDateEl.value;
+
+    try {
+      const [recon, curve] = await Promise.all([
+        apiFetch('/api/reconciliation', { start, end }),
+        apiFetch('/api/capital-curve', { start, end }),
+      ]);
+
+      renderBalance(curve.live_balance);
+      renderCapitalChart(curve.points);
+      renderReconSummary(recon.summary, recon.binance_error);
+      renderTrades(recon.trades);
+      renderOrphans(recon.orphan_binance_orders);
+
+      statusMsg.textContent = `Actualizado: ${new Date().toLocaleString('es-CL')}`;
+    } catch (e) {
+      statusMsg.textContent = 'Error: ' + e.message;
+    } finally {
+      loadBtn.disabled = false;
+    }
+  }
+
+  loadBtn.addEventListener('click', load);
+
+  if (apiBaseEl.value) load();
+</script>
+</body>
+</html>
