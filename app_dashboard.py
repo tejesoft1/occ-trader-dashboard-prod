@@ -133,16 +133,55 @@ def reconciliation():
     else:
         binance_error = "DASH_BINANCE_API_KEY / DASH_BINANCE_API_SECRET no configurados"
 
-    # 3) Match por order_id
+    # 3) Match: cada trade de Postgres = 2 órdenes en Binance (apertura y
+    # cierre). La apertura matchea por order_id; el cierre se busca por
+    # proximidad temporal a closed_at, side opuesto a la apertura, y qty
+    # similar (dentro de 1%), entre las órdenes de Binance aún no usadas.
     binance_by_oid = {o['order_id']: o for o in binance_orders}
-    matched_oids = set()
+    used_oids = set()
+
+    CLOSE_SIDE = {'BUY': 'SELL', 'SELL': 'BUY'}
+    CLOSE_TOLERANCE = timedelta(minutes=10)
+    QTY_TOLERANCE = 0.01  # 1%
+
+    def _find_close_match(open_side, qty, closed_at_dt):
+        if closed_at_dt is None:
+            return None
+        want_side = CLOSE_SIDE.get(open_side)
+        best = None
+        best_diff = None
+        for oid, o in binance_by_oid.items():
+            if oid in used_oids:
+                continue
+            if o['side'] != want_side:
+                continue
+            if qty and abs(o['qty'] - qty) / qty > QTY_TOLERANCE:
+                continue
+            o_time = datetime.strptime(o['time'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+            diff = abs(o_time - closed_at_dt)
+            if diff > CLOSE_TOLERANCE:
+                continue
+            if best is None or diff < best_diff:
+                best, best_diff = oid, diff
+        return best
 
     reconciled = []
     for t in db_trades:
         oid = str(t['order_id']) if t['order_id'] else None
-        b = binance_by_oid.get(oid) if oid else None
-        if b:
-            matched_oids.add(oid)
+        b_open = binance_by_oid.get(oid) if oid else None
+        if b_open:
+            used_oids.add(oid)
+
+        closed_at_dt = None
+        if t['closed_at']:
+            closed_at_dt = datetime.strptime(t['closed_at'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+
+        open_side_binance = 'BUY' if t['side'] == 'long' else 'SELL'
+        close_oid = _find_close_match(open_side_binance, float(t['quantity']), closed_at_dt)
+        b_close = binance_by_oid.get(close_oid) if close_oid else None
+        if close_oid:
+            used_oids.add(close_oid)
+
         reconciled.append({
             'db_trade_id': t['id'],
             'order_id': oid,
@@ -157,16 +196,23 @@ def reconciliation():
             'db_pnl_pct': float(t['pnl_pct']) if t['pnl_pct'] is not None else None,
             'closed_at': _fmt_ts(t['closed_at']),
             'close_signal': t['close_signal'],
-            'binance_match': {
-                'price': b['avg_price'],
-                'quantity': b['qty'],
-                'realized_pnl': b['realized_pnl'],
-                'commission': b['commission'],
-                'time': _fmt_ts(b['time']),
-            } if b else None,
+            'binance_open': {
+                'order_id': oid,
+                'price': b_open['avg_price'],
+                'quantity': b_open['qty'],
+                'time': _fmt_ts(b_open['time']),
+            } if b_open else None,
+            'binance_close': {
+                'order_id': close_oid,
+                'price': b_close['avg_price'],
+                'quantity': b_close['qty'],
+                'realized_pnl': b_close['realized_pnl'],
+                'commission': b_close['commission'] + (b_open['commission'] if b_open else 0),
+                'time': _fmt_ts(b_close['time']),
+            } if b_close else None,
         })
 
-    # Órdenes que existen en Binance pero no en Postgres (huérfanas)
+    # Órdenes que existen en Binance pero no se usaron como apertura ni cierre
     orphan_binance = [
         {
             'order_id': oid,
@@ -177,15 +223,22 @@ def reconciliation():
             'commission': o['commission'],
             'time': _fmt_ts(o['time']),
         }
-        for oid, o in binance_by_oid.items() if oid not in matched_oids
+        for oid, o in binance_by_oid.items() if oid not in used_oids
     ]
+
+    matched_count = len([r for r in reconciled if r['binance_open'] and r['binance_close']])
+    partial_count = len([r for r in reconciled
+                          if (r['binance_open'] is None) != (r['binance_close'] is None)])
+    unmatched_count = len([r for r in reconciled
+                            if r['binance_open'] is None and r['binance_close'] is None])
 
     summary = {
         'db_trades_count': len(db_trades),
         'binance_orders_count': len(binance_orders),
-        'matched_count': len(matched_oids),
+        'matched_count': matched_count,
+        'partial_count': partial_count,
+        'unmatched_db_count': unmatched_count,
         'orphan_binance_count': len(orphan_binance),
-        'unmatched_db_count': len([r for r in reconciled if r['binance_match'] is None]),
     }
 
     return jsonify({
@@ -284,3 +337,4 @@ def health():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
+

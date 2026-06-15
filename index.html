@@ -173,9 +173,10 @@
         <thead>
           <tr>
             <th>ID</th><th>Fecha</th><th>Side</th><th>Señal</th>
-            <th>Precio (DB)</th><th>Precio (Binance)</th>
+            <th>Precio (DB)</th><th>Precio apertura (Binance)</th>
             <th>Qty (DB)</th><th>Qty (Binance)</th>
-            <th>PnL (DB)</th><th>PnL real. (Binance)</th>
+            <th>PnL (DB)</th><th>PnL neto cierre (Binance)</th>
+            <th>Diferencia</th>
             <th>Match</th>
           </tr>
         </thead>
@@ -331,9 +332,10 @@
     const items = [
       ['Trades en Postgres', summary.db_trades_count, ''],
       ['Órdenes en Binance', summary.binance_orders_count, ''],
-      ['Coincidencias', summary.matched_count, 'success'],
-      ['Sin match en Binance', summary.unmatched_db_count, summary.unmatched_db_count > 0 ? 'warning' : ''],
-      ['Huérfanas en Binance', summary.orphan_binance_count, summary.orphan_binance_count > 0 ? 'warning' : ''],
+      ['Match completo (apertura+cierre)', summary.matched_count, 'success'],
+      ['Match parcial', summary.partial_count, summary.partial_count > 0 ? 'warning' : ''],
+      ['Sin match', summary.unmatched_db_count, summary.unmatched_db_count > 0 ? 'warning' : ''],
+      ['Órdenes Binance sin trade asociado', summary.orphan_binance_count, summary.orphan_binance_count > 0 ? 'warning' : ''],
     ];
     el.innerHTML = items.map(([label, val, cls]) => `
       <div class="metric">
@@ -353,21 +355,34 @@
   function renderTrades(trades) {
     const body = document.getElementById('tradesBody');
     body.innerHTML = trades.map(t => {
-      const b = t.binance_match;
-      const matchBadge = b
-        ? '<span class="badge badge-ok">OK</span>'
-        : '<span class="badge badge-err">sin match</span>';
+      const o = t.binance_open;
+      const c = t.binance_close;
+      let matchBadge;
+      if (o && c) matchBadge = '<span class="badge badge-ok">OK</span>';
+      else if (o || c) matchBadge = '<span class="badge badge-warn">parcial</span>';
+      else matchBadge = '<span class="badge badge-err">sin match</span>';
+
+      const dbPnl = t.db_pnl_usdt !== null ? t.db_pnl_usdt : null;
+      const binPnl = c ? c.realized_pnl - c.commission : null;
+      let pnlDiffCell = '—';
+      if (dbPnl !== null && binPnl !== null) {
+        const diff = dbPnl - binPnl;
+        const cls = Math.abs(diff) < 0.01 ? 'success' : 'warning';
+        pnlDiffCell = `<span class="${cls}">${fmtUSD(diff)}</span>`;
+      }
+
       return `<tr>
         <td>${t.db_trade_id}</td>
         <td>${fmtDate(t.timestamp)}</td>
         <td>${t.side} / ${t.status}</td>
         <td>${t.signal}${t.close_signal ? ' → ' + t.close_signal : ''}</td>
         <td>${fmtNum(t.db_price)}</td>
-        <td>${b ? fmtNum(b.price) : '—'}</td>
+        <td>${o ? fmtNum(o.price) : '—'}</td>
         <td>${fmtNum(t.db_quantity, 2)}</td>
-        <td>${b ? fmtNum(b.quantity, 2) : '—'}</td>
-        <td>${t.db_pnl_usdt !== null ? fmtUSD(t.db_pnl_usdt) : '—'}</td>
-        <td>${b ? fmtUSD(b.realized_pnl) : '—'}</td>
+        <td>${o ? fmtNum(o.quantity, 2) : '—'}</td>
+        <td>${dbPnl !== null ? fmtUSD(dbPnl) : '—'}</td>
+        <td>${binPnl !== null ? fmtUSD(binPnl) : '—'}</td>
+        <td>${pnlDiffCell}</td>
         <td>${matchBadge}</td>
       </tr>`;
     }).join('');
@@ -428,3 +443,4 @@
 </script>
 </body>
 </html>
+
