@@ -220,11 +220,12 @@
   const loadBtn = document.getElementById('loadBtn');
   const statusMsg = document.getElementById('statusMsg');
 
-  // Defaults: últimos 30 días
+  // Defaults: últimos 30 días (solo si no hay fechas guardadas de una
+  // sesión anterior)
   const today = new Date();
   const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-  endDateEl.value = today.toISOString().slice(0, 10);
-  startDateEl.value = monthAgo.toISOString().slice(0, 10);
+  startDateEl.value = localStorage.getItem('occ_dash_start') || monthAgo.toISOString().slice(0, 10);
+  endDateEl.value = localStorage.getItem('occ_dash_end') || today.toISOString().slice(0, 10);
 
   // Recordar config en localStorage del navegador (no sensible más allá de
   // lo que el propio usuario tipea, queda solo en su equipo)
@@ -275,6 +276,12 @@
       capitalChart.update();
       return;
     }
+
+    // Defensa contra dobles inicializaciones: si el canvas ya tiene un
+    // chart asociado (por ejemplo, una carga automática previa que corrió
+    // antes de que capitalChart se asignara), destruirlo primero.
+    const existing = Chart.getChart('capitalChart');
+    if (existing) existing.destroy();
 
     capitalChart = new Chart(document.getElementById('capitalChart'), {
       type: 'line',
@@ -417,6 +424,8 @@
     }
     localStorage.setItem('occ_dash_api_base', apiBaseEl.value);
     localStorage.setItem('occ_dash_api_token', apiTokenEl.value);
+    localStorage.setItem('occ_dash_start', startDateEl.value);
+    localStorage.setItem('occ_dash_end', endDateEl.value);
 
     loadBtn.disabled = true;
     statusMsg.textContent = 'Cargando...';
