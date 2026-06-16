@@ -267,23 +267,19 @@
   }
 
   function renderCapitalChart(points) {
-    const labels = points.map(p => {
+    // Filtrar snapshots horarios con posición abierta (unrealized_pnl != 0)
+    const filtered = points.filter(p => !(p.source === 'hourly' && p.unrealized_pnl !== 0));
+    const labels = filtered.map(p => {
       const d = new Date(p.timestamp);
       const pad = (n) => String(n).padStart(2, '0');
       return `${pad(d.getUTCDate())}-${pad(d.getUTCMonth() + 1)} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
     });
-    const equity = points.map(p => p.total_equity);
-    const peak = [];
-    let maxEquity = -Infinity;
-    points.forEach(p => {
-      if (p.total_equity > maxEquity) maxEquity = p.total_equity;
-      peak.push(maxEquity);
-    });
+    const equity = filtered.map(p => p.total_equity);
+
 
     if (capitalChart) {
       capitalChart.data.labels = labels;
       capitalChart.data.datasets[0].data = equity;
-      capitalChart.data.datasets[1].data = peak;
       capitalChart.update();
       return;
     }
@@ -309,16 +305,7 @@
             pointRadius: 0,
             borderWidth: 2,
           },
-          {
-            label: 'Peak equity',
-            data: peak,
-            borderColor: '#6b7080',
-            backgroundColor: 'transparent',
-            borderDash: [4, 3],
-            tension: 0,
-            pointRadius: 0,
-            borderWidth: 1,
-          },
+
         ],
       },
       options: {
