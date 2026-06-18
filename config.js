@@ -1,5 +1,4 @@
-// config.js — generado en deploy, NO subir a git con valores reales
+// config.js — producción
 window.OCC_DASH_CONFIG = {
-  apiBase: 'https://occ-dashboard.tejesoft.cl',
-  apiToken: '6hVMEFjWxGMlwqHQ1tJgkrNCBaZvZ8gI0NV669rnUMU'
+  apiBase: 'https://occ-dashboard-prod.tejesoft.cl'
 };
