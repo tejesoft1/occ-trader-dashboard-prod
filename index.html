@@ -218,13 +218,13 @@
   // sesión anterior)
   const today = new Date();
   const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-  startDateEl.value = localStorage.getItem('occ_dash_start') || monthAgo.toISOString().slice(0, 10);
+  startDateEl.value = localStorage.getItem('occ_dash_prod_start') || monthAgo.toISOString().slice(0, 10);
   endDateEl.value = today.toISOString().slice(0, 10); // siempre hoy
 
   // Recordar config en localStorage del navegador (no sensible más allá de
   // lo que el propio usuario tipea, queda solo en su equipo)
   const _cfg = window.OCC_DASH_CONFIG || {};
-  apiBaseEl.value = localStorage.getItem('occ_dash_api_base') || _cfg.apiBase || '';
+  apiBaseEl.value = localStorage.getItem('occ_dash_prod_api_base') || _cfg.apiBase || '';
 
   const fmtUSD = (v) => (v === null || v === undefined) ? '—' :
     '$' + Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -405,9 +405,9 @@
       statusMsg.textContent = 'Ingresá la URL del API.';
       return;
     }
-    localStorage.setItem('occ_dash_api_base', apiBaseEl.value);
-    localStorage.setItem('occ_dash_start', startDateEl.value);
-    localStorage.setItem('occ_dash_end', endDateEl.value);
+    localStorage.setItem('occ_dash_prod_api_base', apiBaseEl.value);
+    localStorage.setItem('occ_dash_prod_start', startDateEl.value);
+    localStorage.setItem('occ_dash_prod_end', endDateEl.value);
 
     loadBtn.disabled = true;
     statusMsg.textContent = 'Cargando...';
