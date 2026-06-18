@@ -1,16 +1,14 @@
 services:
-  occ-dashboard:
+  occ-dashboard-prod:
     build: .
-    container_name: occ-dashboard
+    container_name: occ-dashboard-prod
+    restart: unless-stopped
     env_file: .env.dashboard
     ports:
-      - "127.0.0.1:5004:5000"   # detrás de nginx (occ-dashboard.tejesoft.cl)
-    restart: unless-stopped
+      - "127.0.0.1:5006:5000"
     networks:
       - occ-net
 
 networks:
   occ-net:
     external: true
-    name: occ-net
-
